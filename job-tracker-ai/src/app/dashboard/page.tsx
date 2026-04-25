@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { onAuthStateChanged, User, signOut } from 'firebase/auth';
-import { collection, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, limit, doc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../../lib/firebase';
 
 /* ─────────────────────────────────────────────
@@ -25,6 +25,7 @@ interface Application {
     actionPlan: string;
     emailDraft?: string;
   };
+  reasoning?: string;
 }
 
 interface ActionTask {
@@ -35,6 +36,7 @@ interface ActionTask {
   userId: string;
   status?: string;
   createdAt?: any;
+  draftContent?: string;
 }
 
 /* ─────────────────────────────────────────────
@@ -207,6 +209,22 @@ export default function Dashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const router = useRouter();
 
+  const handleMarkComplete = async (taskId: string) => {
+    try {
+      const taskRef = doc(db, "action_queue", taskId);
+      // Update the database document
+      await updateDoc(taskRef, {
+        status: "completed"
+      });
+      // The onSnapshot listener will automatically remove it from the UI,
+      // so we just need to close the modal.
+      setIsModalOpen(false);
+    } catch (error) {
+      console.error("Error marking task complete:", error);
+      alert("Failed to update database. Check console.");
+    }
+  };
+
   /* Auth listener */
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -248,8 +266,8 @@ export default function Dashboard() {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const tasksData = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() } as ActionTask))
-        // SECURITY & FILTERING: Only keep tasks where the applicationId matches one of ours
-        .filter(task => appIds.includes(task.applicationId)); 
+        // SECURITY & FILTERING: Only keep tasks where the applicationId matches one of ours AND are not completed
+        .filter(task => appIds.includes(task.applicationId) && task.status !== "completed"); 
 
       setActionQueue(tasksData);
     });
@@ -452,67 +470,89 @@ export default function Dashboard() {
         </main>
       </div>
 
-      {/* ── MODAL ─────────────────────────────── */}
+      {/* MODAL OVERLAY */}
       {isModalOpen && selectedApp && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setIsModalOpen(false)} />
-          <div className="relative w-full max-w-2xl glass-card rounded-[2rem] overflow-hidden animate-fade-in-up border border-white/10">
-            <div className="p-8 sm:p-10">
-              <div className="flex items-start justify-between mb-8">
-                <div>
-                  <div className="text-blue-500 font-mono text-[10px] uppercase font-bold tracking-widest mb-1">Agent Strategy Report</div>
-                  <h2 className="text-4xl font-black font-display tracking-tighter uppercase italic">{selectedApp.company}</h2>
-                  <p className="text-gray-400 text-sm">{selectedApp.role}</p>
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+          <div className="bg-[#1C1E27] border-2 border-[#4285F4] shadow-[8px_8px_0px_0px_#4285F4] max-w-3xl w-full max-h-[90vh] overflow-y-auto flex flex-col">
+            
+            {/* Modal Header */}
+            <div className="border-b-2 border-[#2A2D3A] p-6 flex justify-between items-start bg-[#13141A]">
+              <div>
+                <h2 className="text-3xl font-black text-white uppercase tracking-tight">{selectedApp.company}</h2>
+                <p className="text-[#4285F4] font-mono text-sm mt-1 uppercase">{selectedApp.role} • STRATEGY BRIEF</p>
+              </div>
+              <button 
+                onClick={() => setIsModalOpen(false)}
+                className="text-gray-500 hover:text-white font-mono text-2xl font-bold transition-colors"
+              >
+                [X]
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 grid gap-6">
+              
+              {/* Agent Reasoning Section */}
+              <div className="border-2 border-[#2A2D3A] p-5 bg-[#13141A]">
+                <div className="text-xs uppercase font-mono text-[#34A853] mb-3 flex items-center gap-2 font-bold tracking-widest">
+                  <span className="w-2 h-2 bg-[#34A853] rounded-full animate-pulse shadow-[0_0_8px_#34A853]"></span>
+                  Analyst Agent Reasoning
                 </div>
-                <button onClick={() => setIsModalOpen(false)} className="p-2 text-gray-500 hover:text-white transition-colors">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
+                <p className="text-gray-300 font-mono text-sm whitespace-pre-wrap leading-relaxed">
+                  {selectedApp.analysis?.summary || selectedApp.reasoning || "Analysis data pending extraction..."}
+                </p>
               </div>
 
-              <div className="space-y-8">
-                {/* AI Summary */}
-                <div className="bg-white/5 rounded-2xl p-6 border border-white/5">
-                  <h4 className="text-xs font-mono uppercase text-gray-500 mb-4 tracking-widest">AI Situation Analysis</h4>
-                  <p className="text-sm leading-relaxed text-gray-300">
-                    {selectedApp.analysis?.summary || "The Extractor Agent is still synthesizing the latest interaction data for this company. Check back shortly for a full sentiment and risk assessment."}
-                  </p>
-                </div>
-
-                {/* Strategy Action Plan */}
-                <div>
-                  <h4 className="text-xs font-mono uppercase text-gray-500 mb-4 tracking-widest">Recommended Maneuvers</h4>
-                  <div className="space-y-3">
-                    {selectedApp.analysis?.nextSteps ? (
-                      selectedApp.analysis.nextSteps.map((step, i) => (
-                        <div key={i} className="flex gap-4 p-4 rounded-xl bg-blue-600/10 border border-blue-500/20 text-sm">
-                          <span className="text-blue-500 font-mono font-bold">0{i+1}</span>
-                          <span className="text-gray-300">{step}</span>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="flex gap-4 p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-sm">
-                        <span className="text-amber-500 font-mono font-bold">!</span>
-                        <span className="text-gray-300 italic">Wait for incoming email data to generate specific maneuvers.</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Probability Footer */}
-                <div className="flex items-center justify-between pt-6 border-t border-gray-800">
-                  <div className="flex items-center gap-4">
-                    <div className="text-[10px] font-mono text-gray-500 uppercase tracking-widest">Success Metric</div>
-                    <div className="text-3xl font-black font-display" style={{ color: getProbabilityColor(selectedApp.offerProbability) }}>
-                      {selectedApp.offerProbability}%
-                    </div>
-                  </div>
-                  <button className="px-6 py-3 rounded-xl bg-white text-black font-bold text-xs uppercase tracking-widest hover:bg-blue-500 hover:text-white transition-all">
-                    Generate Email Draft
-                  </button>
-                </div>
+              {/* AI Drafted Action Section */}
+              <div className="border-2 border-[#2A2D3A] p-5 bg-[#13141A]">
+                 <div className="text-xs uppercase font-mono text-[#FBBC05] mb-3 flex justify-between items-center font-bold tracking-widest">
+                    <span className="flex items-center gap-2">
+                      <span className="w-2 h-2 bg-[#FBBC05] rounded-full"></span>
+                      Strategist Agent Draft
+                    </span>
+                    <span className="text-gray-500 border border-gray-700 px-2 py-1 text-[10px]">
+                      AUTO-GENERATED
+                    </span>
+                 </div>
+                 
+                 <div className="bg-black p-5 text-gray-300 font-mono text-sm whitespace-pre-wrap border border-gray-800 relative group">
+                    {/* Dynamically look up the draft content for this specific application */}
+                    {actionQueue.find(t => t.applicationId === selectedApp.id)?.draftContent || "No drafted response available for this event."}
+                    
+                    {/* One-Click Copy Button */}
+                    <button 
+                      onClick={() => {
+                        const draft = actionQueue.find(t => t.applicationId === selectedApp.id)?.draftContent;
+                        if (draft) {
+                          navigator.clipboard.writeText(draft);
+                          alert("Draft copied to clipboard!");
+                        }
+                      }}
+                      className="absolute top-4 right-4 bg-white text-black border-2 border-black px-4 py-2 text-xs font-bold uppercase hover:bg-[#4285F4] hover:text-white transition-all opacity-0 group-hover:opacity-100"
+                    >
+                      Copy
+                    </button>
+                 </div>
+                 
+                 <div className="mt-6 flex justify-end gap-4 border-t-2 border-[#2A2D3A] pt-4">
+                    <button 
+                      onClick={() => setIsModalOpen(false)}
+                      className="px-6 py-2 border-2 border-gray-600 text-gray-400 hover:text-white font-bold uppercase text-sm transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      onClick={() => {
+                        const activeTask = actionQueue.find(t => t.applicationId === selectedApp.id);
+                        if (activeTask) handleMarkComplete(activeTask.id);
+                      }}
+                      className="bg-[#34A853] text-black border-2 border-black px-6 py-2 font-black uppercase text-sm hover:bg-white transition-colors"
+                    >
+                      Mark as Executed
+                    </button>
+                 </div>
               </div>
+
             </div>
           </div>
         </div>
