@@ -1,3 +1,4 @@
+// Deployment Force-Refresh: 2026-04-25
 import { onMessagePublished } from "firebase-functions/v2/pubsub";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import * as admin from "firebase-admin";
@@ -8,9 +9,16 @@ import { google } from "googleapis";
 admin.initializeApp();
 export const db = admin.firestore();
 
-// Initialize Gemini (We will set this API key in the Firebase environment later)
-// Fallback to empty string to prevent TypeScript errors during deployment setup
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+// Lazy Gemini initializer - must be called inside a function handler so the
+// GEMINI_API_KEY secret is already mounted by the Firebase v2 runtime.
+// .trim() strips any hidden newlines or spaces injected by Secret Manager or the terminal.
+function getGenAI() {
+  const rawKey = process.env.GEMINI_API_KEY;
+  if (!rawKey) throw new Error("GEMINI_API_KEY secret is not available in this environment.");
+  const key = rawKey.trim();
+  console.log(`[DEBUG] GEMINI_API_KEY loaded: length=${key.length}, prefix=${key.substring(0, 8)}`);
+  return new GoogleGenerativeAI(key);
+}
 
 /**
  * AGENT 01: THE EXTRACTOR
@@ -19,8 +27,8 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
  */
 export async function runExtractorAgent(rawEmailText: string) {
   // We use the flash model for maximum speed and cost-efficiency
-  const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
+  const model = getGenAI().getGenerativeModel({
+    model: "gemini-2.5-flash",
     generationConfig: {
       temperature: 0.1, // Highly deterministic
       responseMimeType: "application/json", // Forces the AI to output valid JSON
@@ -65,12 +73,29 @@ export async function runExtractorAgent(rawEmailText: string) {
  * Gmail pushes notifications to a Pub/Sub topic named "gmail-events".
  * This function triggers automatically whenever a new message hits that topic.
  */
-export const gmailWebhook = onMessagePublished("gmail-events", async (event) => {
+export const gmailWebhook = onMessagePublished({
+  topic: "gmail-events",
+  secrets: ["GEMINI_API_KEY"],
+}, async (event) => {
   try {
-    const base64Data = event.data.message.data;
-    const decodedData = Buffer.from(base64Data, 'base64').toString('utf-8');
-    const gmailNotification = JSON.parse(decodedData);
+    // SAFE PARSE: Handle both pre-decoded objects and raw base64 strings
+    let gmailNotification;
+
+    if (event.data.message.json) {
+      // SDK already decoded it for us
+      gmailNotification = event.data.message.json;
+    } else {
+      // Manual decode for raw strings
+      const base64Data = event.data.message.data;
+      const decodedData = Buffer.from(base64Data, 'base64').toString('utf-8');
+      gmailNotification = JSON.parse(decodedData);
+    }
+
     const userEmail = gmailNotification.emailAddress;
+    if (!userEmail) {
+      console.log("No emailAddress found in payload. Aborting.");
+      return true;
+    }
 
     console.log("Live Ping Received for:", userEmail);
 
@@ -178,8 +203,8 @@ export const gmailWebhook = onMessagePublished("gmail-events", async (event) => 
  * Temperature: 0.3 (Some reasoning, highly structured).
  */
 async function runAnalystAgent(currentProbability: number, eventType: string, sentiment: number) {
-  const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
+  const model = getGenAI().getGenerativeModel({
+    model: "gemini-2.5-flash",
     generationConfig: { temperature: 0.3, responseMimeType: "application/json" }
   });
 
@@ -214,8 +239,8 @@ async function runAnalystAgent(currentProbability: number, eventType: string, se
  * Temperature: 0.5 (More natural language for drafting emails).
  */
 async function runStrategistAgent(analystData: any, companyName: string, eventType: string) {
-  const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
+  const model = getGenAI().getGenerativeModel({
+    model: "gemini-2.5-flash",
     generationConfig: { temperature: 0.5, responseMimeType: "application/json" }
   });
 
@@ -242,7 +267,10 @@ async function runStrategistAgent(analystData: any, companyName: string, eventTy
  * THE EVENT TRIGGER
  * Fires automatically when a new email event is saved to Firestore.
  */
-export const processNewEmailEvent = onDocumentCreated("email_events/{eventId}", async (event) => {
+export const processNewEmailEvent = onDocumentCreated({
+  document: "email_events/{eventId}",
+  secrets: ["GEMINI_API_KEY"],
+}, async (event) => {
   const eventData = event.data?.data();
   if (!eventData) return;
 
