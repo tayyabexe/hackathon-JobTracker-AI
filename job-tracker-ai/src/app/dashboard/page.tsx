@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { onAuthStateChanged, User, signOut } from 'firebase/auth';
 import { collection, query, where, onSnapshot, orderBy, limit, doc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../../lib/firebase';
+import CVUploader from '@/components/CVUploader';
 
 /* ─────────────────────────────────────────────
    Types
@@ -100,9 +101,8 @@ function StatCard({
 }: { label: string; value: string | number; sub?: string; color: string; delay: string }) {
   return (
     <div
-      className={`animate-fade-in-up ${delay} glass-card rounded-2xl p-5 group cursor-default hover:border-opacity-60 transition-all duration-300`}
-      onMouseEnter={e => (e.currentTarget.style.boxShadow = `0 0 30px ${color}20`)}
-      onMouseLeave={e => (e.currentTarget.style.boxShadow = '')}
+      className={`animate-fade-in-up ${delay} card`}
+      style={{ borderTop: `2px solid ${color}80` }}
     >
       <div className="text-xs uppercase tracking-widest font-mono-custom mb-3" style={{ color: 'var(--text-muted)' }}>
         {label}
@@ -122,9 +122,7 @@ function AppCard({ app, index, onOpenStrategy }: { app: Application; index: numb
 
   return (
     <div
-      className={`animate-fade-in-up ${delay} glass-card rounded-2xl p-5 sm:p-6 group transition-all duration-300 hover:border-opacity-50`}
-      onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 8px 40px rgba(66,133,244,0.08)')}
-      onMouseLeave={e => (e.currentTarget.style.boxShadow = '')}
+      className={`animate-fade-in-up ${delay} card`}
     >
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div
@@ -386,6 +384,26 @@ export default function Dashboard() {
               <StatCard label="Agent Tasks" value={actionQueue.length} color="#7C5CFC" delay="delay-400" sub="In Queue" />
             </div>
 
+            {/* Intelligence Tools Section */}
+            <div className="mb-8 animate-fade-in-up delay-500">
+              <div className="flex items-center justify-between border-b border-gray-800 pb-2 mb-4">
+                <h3 className="text-gray-400 font-mono text-xs uppercase tracking-widest">Intelligence Tools</h3>
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                <div className="lg:col-span-4">
+                  <CVUploader user={user} />
+                </div>
+                <div className="lg:col-span-8 card p-6 flex flex-col justify-center border-dashed border-2 border-[var(--border-subtle)] bg-transparent">
+                   <div className="text-center">
+                     <p className="text-[var(--accent-primary)] font-mono text-xs uppercase mb-2 tracking-widest">Awaiting Command</p>
+                     <p className="text-sm text-[var(--text-muted)] font-mono uppercase">
+                       Agent 04 (CV Coach) & Agent 05 (Market Pulse) are currently in standby mode.
+                     </p>
+                   </div>
+                </div>
+              </div>
+            </div>
+
             <div className="grid grid-cols-12 gap-8">
               {/* Pipeline List */}
               <div className="col-span-12 lg:col-span-8 space-y-6">
@@ -431,7 +449,7 @@ export default function Dashboard() {
                       const companyName = parentApp ? parentApp.company : "Unknown Company";
 
                       return (
-                        <div key={task.id} className="animate-fade-in-up glass-card rounded-2xl p-4 border-l-4 border-amber-500 flex flex-col justify-between h-full">
+                        <div key={task.id} className="animate-fade-in-up card flex flex-col justify-between h-full" style={{ borderLeftColor: 'var(--accent-warning)', borderLeftWidth: '4px' }}>
                           <div>
                             <div className="text-[10px] text-amber-500 font-mono uppercase font-bold mb-1">
                               {task.actionType}
@@ -445,7 +463,7 @@ export default function Dashboard() {
                           </div>
                           
                           <button 
-                            className="mt-4 w-full border border-gray-600 rounded-xl py-2 text-xs font-bold text-gray-300 hover:bg-white hover:text-black transition-colors"
+                            className="mt-4 w-full btn btn-secondary text-xs"
                             onClick={() => {
                               if (parentApp) {
                                 setSelectedApp(parentApp);
@@ -472,11 +490,11 @@ export default function Dashboard() {
 
       {/* MODAL OVERLAY */}
       {isModalOpen && selectedApp && (
-        <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
-          <div className="bg-[#1C1E27] border-2 border-[#4285F4] shadow-[8px_8px_0px_0px_#4285F4] max-w-3xl w-full max-h-[90vh] overflow-y-auto flex flex-col">
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+          <div className="glass-panel max-w-3xl w-full max-h-[90vh] overflow-y-auto flex flex-col" style={{ borderRadius: '16px' }}>
             
             {/* Modal Header */}
-            <div className="border-b-2 border-[#2A2D3A] p-6 flex justify-between items-start bg-[#13141A]">
+            <div className="border-b border-[var(--border-subtle)] p-6 flex justify-between items-start">
               <div>
                 <h2 className="text-3xl font-black text-white uppercase tracking-tight">{selectedApp.company}</h2>
                 <p className="text-[#4285F4] font-mono text-sm mt-1 uppercase">{selectedApp.role} • STRATEGY BRIEF</p>
@@ -493,7 +511,7 @@ export default function Dashboard() {
             <div className="p-6 grid gap-6">
               
               {/* Agent Reasoning Section */}
-              <div className="border-2 border-[#2A2D3A] p-5 bg-[#13141A]">
+              <div className="card p-5" style={{ background: 'rgba(0,0,0,0.2)' }}>
                 <div className="text-xs uppercase font-mono text-[#34A853] mb-3 flex items-center gap-2 font-bold tracking-widest">
                   <span className="w-2 h-2 bg-[#34A853] rounded-full animate-pulse shadow-[0_0_8px_#34A853]"></span>
                   Analyst Agent Reasoning
@@ -504,7 +522,7 @@ export default function Dashboard() {
               </div>
 
               {/* AI Drafted Action Section */}
-              <div className="border-2 border-[#2A2D3A] p-5 bg-[#13141A]">
+              <div className="card p-5" style={{ background: 'rgba(0,0,0,0.2)' }}>
                  <div className="text-xs uppercase font-mono text-[#FBBC05] mb-3 flex justify-between items-center font-bold tracking-widest">
                     <span className="flex items-center gap-2">
                       <span className="w-2 h-2 bg-[#FBBC05] rounded-full"></span>
@@ -515,7 +533,7 @@ export default function Dashboard() {
                     </span>
                  </div>
                  
-                 <div className="bg-black p-5 text-gray-300 font-mono text-sm whitespace-pre-wrap border border-gray-800 relative group">
+                 <div className="p-5 text-[var(--text-primary)] font-mono text-sm whitespace-pre-wrap border border-[var(--border-subtle)] rounded-lg relative group" style={{ background: 'rgba(0,0,0,0.4)' }}>
                     {/* Dynamically look up the draft content for this specific application */}
                     {actionQueue.find(t => t.applicationId === selectedApp.id)?.draftContent || "No drafted response available for this event."}
                     
@@ -528,16 +546,16 @@ export default function Dashboard() {
                           alert("Draft copied to clipboard!");
                         }
                       }}
-                      className="absolute top-4 right-4 bg-white text-black border-2 border-black px-4 py-2 text-xs font-bold uppercase hover:bg-[#4285F4] hover:text-white transition-all opacity-0 group-hover:opacity-100"
+                      className="absolute top-4 right-4 btn btn-primary text-xs opacity-0 group-hover:opacity-100"
                     >
                       Copy
                     </button>
                  </div>
                  
-                 <div className="mt-6 flex justify-end gap-4 border-t-2 border-[#2A2D3A] pt-4">
+                 <div className="mt-6 flex justify-end gap-4 border-t border-[var(--border-subtle)] pt-4">
                     <button 
                       onClick={() => setIsModalOpen(false)}
-                      className="px-6 py-2 border-2 border-gray-600 text-gray-400 hover:text-white font-bold uppercase text-sm transition-colors"
+                      className="btn btn-secondary px-6 py-2"
                     >
                       Cancel
                     </button>
@@ -546,7 +564,7 @@ export default function Dashboard() {
                         const activeTask = actionQueue.find(t => t.applicationId === selectedApp.id);
                         if (activeTask) handleMarkComplete(activeTask.id);
                       }}
-                      className="bg-[#34A853] text-black border-2 border-black px-6 py-2 font-black uppercase text-sm hover:bg-white transition-colors"
+                      className="btn btn-primary px-6 py-2"
                     >
                       Mark as Executed
                     </button>

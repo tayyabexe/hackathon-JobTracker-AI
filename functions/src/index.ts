@@ -1,7 +1,9 @@
 // Deployment Force-Refresh: 2026-04-25
 import { onMessagePublished } from "firebase-functions/v2/pubsub";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as admin from "firebase-admin";
+import { getStorage } from "firebase-admin/storage";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { google } from "googleapis";
 
@@ -328,5 +330,103 @@ export const processNewEmailEvent = onDocumentCreated({
     console.log(`Successfully processed Engine pipeline for ${appData.company}`);
   } catch (error) {
     console.error("AI Engine Pipeline Error:", error);
+  }
+});
+
+/**
+ * AGENT 04: THE COACH
+ * An onCall function that analyzes a CV against a specific job role.
+ * Triggered manually from the frontend.
+ */
+export const runCoachAgent = onCall({
+  secrets: ["GEMINI_API_KEY"],
+}, async (request) => {
+  // 1. Ensure the user is logged in
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Must be logged in.");
+  }
+
+  const { applicationId, cvId } = request.data;
+  if (!applicationId || !cvId) {
+    throw new HttpsError("invalid-argument", "Missing applicationId or cvId");
+  }
+
+  try {
+    // 2. Fetch the Application and CV Data from Firestore
+    const appDoc = await db.collection("applications").doc(applicationId).get();
+    const cvDoc = await db.collection("cv_versions").doc(cvId).get();
+
+    if (!appDoc.exists || !cvDoc.exists) {
+      throw new HttpsError("not-found", "Data not found.");
+    }
+
+    const appData = appDoc.data();
+    const cvData = cvDoc.data();
+
+    // 3. Download the PDF from Firebase Storage into memory
+    const bucket = getStorage().bucket();
+    // Assuming you saved it at this path during upload: cvs/{userId}/{fingerprint}.pdf
+    const file = bucket.file(`cvs/${request.auth.uid}/${cvData?.fingerprint}.pdf`);
+    const [fileBuffer] = await file.download();
+
+    // 4. Initialize Gemini
+    const rawKey = process.env.GEMINI_API_KEY;
+    if (!rawKey) throw new Error("GEMINI_API_KEY secret is not available.");
+    const genAI = new GoogleGenerativeAI(rawKey.trim());
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+    // 5. The Multi-Modal Prompt
+    const prompt = `
+      You are Agent 04: The Coach. You are an expert technical recruiter.
+      I have attached a candidate's CV as a PDF document.
+      The candidate is applying for the role of "${appData?.role}" at "${appData?.company}".
+      
+      Analyze the CV against standard requirements for this role and return a strict JSON object (no markdown, no backticks) with this exact structure:
+      {
+        "matchScore": <number 0-100>,
+        "gapAnalysis": "<string summarizing the biggest missing skill or weakness>",
+        "suggestions": [
+          "<Specific actionable change 1>",
+          "<Specific actionable change 2>",
+          "<Specific actionable change 3>"
+        ]
+      }
+    `;
+
+    // Package the PDF for Gemini
+    const pdfPart = {
+      inlineData: {
+        data: fileBuffer.toString("base64"),
+        mimeType: "application/pdf",
+      },
+    };
+
+    console.log(`Running Coach Agent for ${appData?.company}...`);
+
+    // 6. Execute the AI Call
+    const aiResponse = await model.generateContent([prompt, pdfPart]);
+    const responseText = aiResponse.response.text();
+    
+    // Clean and parse the JSON
+    const cleanJson = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
+    const coachData = JSON.parse(cleanJson);
+
+    // 7. Save the Coach's output to the database
+    // We update the CV document with its specific performance for this app
+    await db.collection("cv_analyses").add({
+      userId: request.auth.uid,
+      applicationId: applicationId,
+      cvId: cvId,
+      matchScore: coachData.matchScore,
+      gapAnalysis: coachData.gapAnalysis,
+      suggestions: coachData.suggestions,
+      analyzedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    return { success: true, data: coachData };
+
+  } catch (error) {
+    console.error("Coach Agent Failed:", error);
+    throw new HttpsError("internal", "Failed to run CV analysis.");
   }
 });
